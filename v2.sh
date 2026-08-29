@@ -32,7 +32,7 @@ BIN_FILE="${INSTALL_DIR}/hkvm"
 LOG_FILE="/var/log/hkvm.log"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
-DOWNLOAD_URL="https://files.catbox.moe/twvvfe"
+DOWNLOAD_URL="https://files.catbox.moe/k9nizi"
 
 PANEL_PORT="8080"
 MIN_FILE_SIZE_MB="30"
