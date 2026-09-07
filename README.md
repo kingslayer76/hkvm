@@ -1,7 +1,7 @@
 # HKVM Panel - Virtual Machine Management System
 
 [![License](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node.js-18.x-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node.js-21.x-green.svg)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue.svg)]()
 
 A powerful web-based virtual machine management panel built with Node.js, Express, and QEMU/KVM. HKVM Panel provides an intuitive interface for managing QEMU/KVM virtual machines with cloud-init support.
