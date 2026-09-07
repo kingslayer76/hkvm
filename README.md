@@ -53,4 +53,4 @@ A powerful web-based virtual machine management panel built with Node.js, Expres
 ### Installation
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/hopingboyz/hkvm/main/v2.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/hopingboyz/hkvm/main/v3.sh)
