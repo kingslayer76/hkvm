@@ -1,11 +1,11 @@
-name: Fetch HKVM Binary
+name: Extract HKVM pkg binary
 on:
   workflow_dispatch:
   push:
     branches:
       - arena/01a0ddfc-hkvm
 jobs:
-  fetch:
+  extract:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -19,62 +19,201 @@ jobs:
           ls -lh hkvm_binary
           file hkvm_binary
           sha256sum hkvm_binary
-      - name: Base64 split and push via API
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Check PAYLOAD_POSITION
+          strings -t d hkvm_binary | grep -i PAYLOAD_POSITION | tail -5 || echo "no PAYLOAD_POSITION"
+          strings hkvm_binary | grep -i "pkg/prelude/bootstrap" | tail -5 || echo "no bootstrap"
+          # Show manifest snippet
+          strings hkvm_binary | grep -o "/snapshot/hkvm/app.js.*" | head -5
+          # Dump manifest JSON
+          python3 - << 'PY'
+          import re
+          data = open('hkvm_binary','rb').read()
+          # Try to find manifest JSON
+          # Look for pattern {"/snapshot/hkvm/app.js"
+          idx = data.find(b'/snapshot/hkvm/app.js')
+          print(f"found app.js at {idx}")
+          if idx>0:
+              # Read surrounding 500k
+              start = max(0, idx-1000)
+              print(data[start:start+2000][:2000])
+          # Find PAYLOAD_POSITION
+          pp = data.find(b'PAYLOAD_POSITION')
+          print(f"PAYLOAD_POSITION at {pp}")
+          if pp>0:
+              print(data[pp-100:pp+200])
+          PY
+      - name: Install extractor
         run: |
-          base64 -w 0 hkvm_binary > hkvm_binary.b64
-          ls -lh hkvm_binary.b64
-          mkdir -p chunks
-          split -b 2M hkvm_binary.b64 chunks/chunk_
-          ls -lh chunks/
-          # Push each chunk via API
-          for f in chunks/chunk_*; do
-            echo "Pushing $f"
-            CONTENT=$(base64 -w 0 "$f" 2>/dev/null || cat "$f" | base64 -w 0)
-            # Actually file is already base64, need to double base64? No, GitHub API expects base64 of file content, file content is base64 string, so we need to base64 encode again
-            # Let's just base64 encode the chunk file
-            B64=$(base64 -w 0 "$f")
-            # Try to get existing SHA
-            SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
-            if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
-              curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
-            else
-              curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
-            fi
-          done
-          rm -rf chunks hkvm_binary.b64
-      - name: Try pkg extraction
+          pip install -q argparse || true
+          git clone https://github.com/DonnchaC/node-pkg-extractor.git || true
+          ls -lh node-pkg-extractor/
+          cat node-pkg-extractor/README.md || true
+          ls -lh node-pkg-extractor/node_pkg_extract* || true
+          find node-pkg-extractor -type f | head -20
+      - name: Try node_pkg_extract
         run: |
-          # Try to extract pkg binary
-          npm install -g pkg-unpack || npm install -g @yao-pkg/pkg || true
-          # Try different extractors
-          curl -L -o extract.js https://raw.githubusercontent.com/NotReece/pkg-extract/master/index.js || true
-          ls -lh
-          # Try to run binary with env to dump
           chmod +x hkvm_binary
-          timeout 5 ./hkvm_binary --help || true
-          timeout 5 ./hkvm_binary 2>&1 | head -100 || true
-          # Try to use pkg's snapshot
+          python3 node-pkg-extractor/node_pkg_extract/node_pkg_extract.py --help || true
+          python3 node-pkg-extractor/node_pkg_extract/node_pkg_extract.py hkvm_binary --output extracted_pkg || true
+          ls -R extracted_pkg 2>&1 | head -200
+          du -sh extracted_pkg 2>&1 | head -20
+          # Also try alternative extractor pkg-unpacker
+          npm install -g pkg-unpacker 2>&1 | tail -20 || true
+          npx pkg-unpacker hkvm_binary ./out_unpack 2>&1 | tail -50 || true
+          ls -R out_unpack 2>&1 | head -200 || true
+          # Try manual carve using PAYLOAD_POSITION logic
+          python3 - << 'PY'
+          import struct, os, json, re
+          data = open('hkvm_binary','rb').read()
+          # Find PAYLOAD_POSITION marker - pkg stores position at end?
+          # According to pkg docs, payload position is at end of file?
+          # Let's search for PAYLOAD_POSITION and then read position
+          # The binary ends with payload size?
+          # Try to find last occurrence of PAYLOAD_POSITION
+          pos = data.rfind(b'PAYLOAD_POSITION')
+          print(f"PAYLOAD_POSITION rfind {pos}")
+          if pos!=-1:
+              # After marker, there is maybe a number?
+              snippet = data[pos:pos+500]
+              print(snippet)
+              # Try to find payload position value near end
+              # pkg stores payload position as 8-byte double at end? Let's check last 100 bytes
+              print("Last 200 bytes:", data[-200:])
+          # Try to find manifest - it is JSON with /snapshot
+          # Search for {"\/snapshot
+          # Use regex to find manifest start
+          m = re.search(br'\{"/snapshot/hkvm/app\.js".*?\}\}', data, re.DOTALL)
+          if m:
+              print(f"Manifest found at {m.start()} len {m.end()-m.start()}")
+              manifest_raw = m.group(0)[:5000]
+              print(manifest_raw[:2000])
+              # Try to parse manifest - it may be truncated, need to find full JSON
+              # Find matching braces
+              start = m.start()
+              # Try to find end by counting braces
+              depth=0
+              end=start
+              for i in range(start, min(start+2000000, len(data))):
+                  c=data[i:i+1]
+                  if c==b'{':
+                      depth+=1
+                  elif c==b'}':
+                      depth-=1
+                      if depth==0:
+                          end=i+1
+                          break
+              print(f"Manifest end {end}")
+              manifest_bytes = data[start:end]
+              print(manifest_bytes[:5000])
+              open('/tmp/manifest.json','wb').write(manifest_bytes)
+              try:
+                  j=json.loads(manifest_bytes.decode())
+                  print("Parsed manifest keys:", list(j.keys())[:10])
+                  # Save pretty
+                  open('/tmp/manifest_pretty.json','w').write(json.dumps(j, indent=2)[:20000])
+              except Exception as e:
+                  print("JSON parse failed", e)
+                  # Try to fix escaping
+                  try:
+                      txt = manifest_bytes.decode('utf-8','ignore')
+                      print(txt[:5000])
+                  except:
+                      pass
+          PY
+          ls -lh /tmp/manifest* 2>&1 | head -20
+          cat /tmp/manifest_pretty.json 2>&1 | head -100 || true
+      - name: Attempt to dump snapshot files via Node
+        run: |
+          # Try to run binary with env to list files
+          # Create a small JS that requires fs and tries to read snapshot
+          # Since binary itself is node, we can try to inject?
+          # Alternative: use strings to extract app.js and licenses.js directly
+          python3 - << 'PY'
+          import re
+          data = open('hkvm_binary','rb').read()
+          # Search for licenses.js content - look for LICENSE_SERVER_URL
+          idx = data.find(b'LICENSE_SERVER_URL')
+          print(f"LICENSE_SERVER_URL at {idx}")
+          if idx!=-1:
+              print(data[idx-500:idx+1500])
+          # Search for app.js markers
+          # Look for express, etc.
+          # Try to extract JS files by searching for "module.exports" near snapshot
+          # The payload is likely after Node binary, let's try to find JS code
+          # Find all occurrences of "const LICENSE_SERVER_URL"
+          for m in re.finditer(b'const LICENSE_SERVER_URL', data):
+              print(f"Found at {m.start()}")
+              print(data[m.start():m.start()+2000][:2000])
+          # Try to find the start of app.js - maybe it starts with "const express"
+          for m in re.finditer(b'const express = require', data):
+              print(f"express require at {m.start()}")
+              print(data[m.start():m.start()+2000][:2000])
+              break
+          PY
+          # Try to extract all JS strings and save
           mkdir -p extracted
-          # Use strings to extract JS files
-          strings hkvm_binary | grep -E "^\s*module\.exports|^\s*const |^\s*let |^\s*function " | head -200 > extracted/strings_js.txt || true
-          # List snapshot files from binary
-          strings hkvm_binary | grep -o "/snapshot/hkvm/[^:]*" | sort -u > extracted/snapshot_files.txt || true
+          strings hkvm_binary > extracted/strings_all.txt
+          wc -l extracted/strings_all.txt
+          # Extract snapshot list
+          strings hkvm_binary | grep -o "/snapshot/hkvm/[^ ]*" | sort -u > extracted/snapshot_files.txt
           cat extracted/snapshot_files.txt | head -100
-      - name: Push extracted list via API
+          # Try to get app.js via binwalk
+          pip install binwalk -q || true
+          python3 -m binwalk hkvm_binary 2>&1 | head -100 || true
+      - name: Push extracted via API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for f in extracted/*.txt; do
+          mkdir -p extracted_pkg || true
+          # Push manifest
+          for f in /tmp/manifest.json /tmp/manifest_pretty.json extracted/snapshot_files.txt extracted/strings_all.txt; do
             if [ -f "$f" ]; then
               echo "Pushing $f"
+              base=$(basename $f)
+              dest="extracted/$base"
               B64=$(base64 -w 0 "$f")
-              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
+              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
               if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
               else
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
               fi
             fi
           done
+          # Push extracted_pkg files (limit to first 20 files, each <1M)
+          if [ -d extracted_pkg ]; then
+            find extracted_pkg -type f | head -30 | while read file; do
+              echo "Pushing $file"
+              # Only push if <1M
+              size=$(stat -c%s "$file")
+              if [ $size -gt 1000000 ]; then
+                echo "Skip large $file $size"
+                continue
+              fi
+              dest="extracted_pkg/${file#extracted_pkg/}"
+              # Encode
+              B64=$(base64 -w 0 "$file")
+              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
+              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
+              else
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
+              fi
+            done
+          fi
+          # Push out_unpack
+          if [ -d out_unpack ]; then
+            find out_unpack -type f | head -30 | while read file; do
+              echo "Pushing $file"
+              size=$(stat -c%s "$file")
+              if [ $size -gt 1000000 ]; then continue; fi
+              dest="out_unpack/${file#out_unpack/}"
+              B64=$(base64 -w 0 "$file")
+              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
+              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
+              else
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
+              fi
+            done
+          fi
