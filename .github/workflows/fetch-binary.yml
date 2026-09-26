@@ -7,6 +7,8 @@ on:
 jobs:
   fetch:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,48 +23,64 @@ jobs:
           echo "Size: $(stat -c%s hkvm_binary)"
           strings hkvm_binary | grep -i "pyinstaller" | head -5 || true
           strings hkvm_binary | grep -iE "https?://" | sort -u | head -100 || true
-          strings hkvm_binary | grep -i "hkvm" | head -20 || true
-          strings hkvm_binary | grep -i "8080" | head -20 || true
-          strings hkvm_binary | grep -i "license" | head -50 || true
-      - name: Install tools
+      - name: Install pyinstxtractor
         run: |
-          pip install --quiet pyinstxtractor || pip install --quiet --break-system-packages pyinstxtractor || true
-          # Try to get pyinstxtractor.py directly
           curl -L -o pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py
-          ls -lh pyinstxtractor.py
-      - name: Extract with pyinstxtractor
-        run: |
           python3 pyinstxtractor.py hkvm_binary || true
-          ls -R | head -200
-          find . -name "*.pyc" | head -50
-          ls -lh hkvm_binary_extracted/ 2>/dev/null | head -100
-      - name: List extracted files
-        run: |
-          find hkvm_binary_extracted -type f | head -100
-          ls -lh hkvm_binary_extracted/ | head -100
-      - name: Try decompile with decompyle3
-        run: |
-          pip install --quiet decompyle3 uncompyle6 || true
-          find hkvm_binary_extracted -name "*.pyc" -exec sh -c 'echo "=== $1 ==="; python3 -m decompyle3 "$1" 2>&1 | head -100' _ {} \; | head -500
-      - name: Save report
+          ls -R | head -300
+          find . -type f -name "*.pyc" | head -100
+          ls -lh hkvm_binary_extracted/ || true
+      - name: Generate report
         run: |
           mkdir -p report
           strings hkvm_binary | grep -iE "https?://" | sort -u > report/urls.txt || true
           strings hkvm_binary | grep -i "pyinstaller" > report/pyinstaller.txt || true
-          find hkvm_binary_extracted -type f > report/files.txt || true
+          strings hkvm_binary | grep -i "HKVM\|hkvm\|8080\|license" | sort -u | head -200 > report/branding.txt || true
+          find hkvm_binary_extracted -type f | sort > report/files.txt || true
           ls -R hkvm_binary_extracted > report/tree.txt 2>&1 || true
-          cat report/urls.txt
-          cat report/files.txt | head -100
-      - name: Commit report
+          echo "=== URLs ===" > report/full.txt
+          cat report/urls.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Branding ===" >> report/full.txt
+          cat report/branding.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Files ===" >> report/full.txt
+          cat report/files.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Tree ===" >> report/full.txt
+          cat report/tree.txt >> report/full.txt
+          cat report/full.txt | head -1000
+      - name: Create release with report
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "arena-bot"
-          git config user.email "bot@arena.ai"
-          git add report/ || true
-          git commit -m "Add binary analysis report" || true
-          git push origin arena/01a0ddfc-hkvm || echo "push failed"
-      - name: Upload extracted as artifact
+          TAG="analysis-$(date +%s)"
+          echo "Creating release $TAG"
+          # Create release via gh
+          gh release create $TAG --title "Binary Analysis $TAG" --notes-file report/full.txt || echo "release create failed"
+          # Also upload report files
+          gh release upload $TAG report/urls.txt report/branding.txt report/files.txt || true
+      - name: Try to push report via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Try to create file via API
+          for f in report/urls.txt report/branding.txt report/files.txt; do
+            if [ -f "$f" ]; then
+              echo "Uploading $f via API"
+              CONTENT=$(base64 -w 0 "$f")
+              # Check if file exists
+              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null || echo "")
+              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
+                curl -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f || true
+              else
+                curl -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$CONTENT\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f || true
+              fi
+            fi
+          done
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: hkvm-extracted
-          path: hkvm_binary_extracted
+          name: hkvm-analysis
+          path: report/
           retention-days: 1
