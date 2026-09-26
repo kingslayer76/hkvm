@@ -1,4 +1,4 @@
-name: Extract HKVM pkg binary v2
+name: Extract HKVM pkg binary v3
 on:
   workflow_dispatch:
   push:
@@ -13,252 +13,181 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: arena/01a0ddfc-hkvm
-      - name: Download and analyze binary
+          fetch-depth: 0
+      - name: Download and analyze
         run: |
           curl -L -o hkvm_binary https://files.catbox.moe/4rnuvl
           ls -lh hkvm_binary
-          file hkvm_binary
-          # Last 2k bytes
-          tail -c 2000 hkvm_binary | od -c | tail -100
-          echo "--- tail -c 500 hex ---"
-          tail -c 500 hkvm_binary | od -An -tx1 | tail -20
-          # Try to find PAYLOAD_POSITION
           python3 - << 'PY'
-          import struct, os, json, re
+          import re, json, os, glob
           data = open('hkvm_binary','rb').read()
           print(f"Size {len(data)}")
-          # Search for PAYLOAD_POSITION
-          for m in re.finditer(b'PAYLOAD_POSITION', data):
+          # Find PAYLOAD_POSITION
+          m = re.search(br'PAYLOAD_POSITION', data)
+          if m:
               print(f"PAYLOAD_POSITION at {m.start()}")
-              print(data[m.start():m.start()+200])
-          # Search for footer pattern - pkg stores payload position at end as JSON?
-          # Try to read last 10k
-          tail = data[-10000:]
-          print("Tail 10k as text (ignore errors):")
-          print(tail.decode('utf-8','ignore')[-2000:])
-          # Try to find manifest JSON fully
-          # Find all occurrences of /snapshot/hkvm/app.js
-          idx = data.find(b'/snapshot/hkvm/app.js')
-          print(f"app.js marker at {idx}")
-          # Find manifest start - it should be a JSON object starting with {" 
-          # Search for {"/snapshot
+              print(data[m.start():m.start()+500])
+          # Find footer
+          tail = data[-20000:].decode('utf-8','ignore')
+          print("Tail 5k:", tail[-5000:])
+          # Try to find manifest
+          # Search for {"/snapshot/hkvm/app.js"
           matches = list(re.finditer(br'\{"/snapshot/hkvm/app\.js"', data))
           print(f"Found {len(matches)} manifest starts")
-          for mm in matches[:3]:
+          for mm in matches:
               start = mm.start()
-              # Try to find matching closing } by counting
               depth=0
               end=start
               for i in range(start, min(start+5000000, len(data))):
-                  b = data[i]
-                  if b==123: # {
+                  b=data[i]
+                  if b==123:
                       depth+=1
-                  elif b==125: # }
+                  elif b==125:
                       depth-=1
                       if depth==0:
                           end=i+1
                           break
-              print(f"Manifest at {start} end {end} len {end-start}")
+              print(f"Manifest candidate at {start} end {end} len {end-start}")
               manifest = data[start:end]
-              # Save
-              open(f'/tmp/manifest_{start}.json','wb').write(manifest)
               try:
                   j=json.loads(manifest.decode())
-                  print(f"Parsed {len(j)} entries")
-                  # Save pretty first 100
+                  print(f"Parsed manifest {len(j)} entries")
+                  open('/tmp/manifest_full.json','wb').write(manifest)
                   with open('/tmp/manifest_pretty_full.json','w') as f:
                       json.dump(j,f,indent=2)
+                  # Also save raw for debugging
                   break
               except Exception as e:
                   print(f"Parse fail {e}")
-                  # Try to save raw for debugging
-                  print(manifest[:2000])
+                  continue
+          # Try to find PAYLOAD_POSITION and SIZE from footer
+          # According to pkg source, footer is like: \nPAYLOAD_POSITION\n<pos>\nPAYLOAD_SIZE\n<size>\n
+          # Let's search in last 100 bytes for numbers
+          # The last bytes may contain the position as double?
+          # Let's try to read last 100 bytes as is
+          print("Last 200 bytes hex:", data[-200:].hex()[:500])
+          # Try regex for PAYLOAD_POSITION and PAYLOAD_SIZE in tail
+          import re
+          mm = re.search(r'PAYLOAD_POSITION\s*(\d+)\s*PAYLOAD_SIZE\s*(\d+)', tail, re.DOTALL)
+          if mm:
+              print(f"Found payload pos {mm.group(1)} size {mm.group(2)}")
+              pos = int(mm.group(1))
+              size = int(mm.group(2))
+              payload = data[pos:pos+size]
+              print(f"Payload extracted len {len(payload)}")
+              open('/tmp/payload.bin','wb').write(payload)
+          else:
+              print("No PAYLOAD_POSITION footer via regex")
+              # Try alternative: pkg stores payload position at end as 8-byte double?
+              # Let's try to find payload by searching for JS code that should be at start of payload
+              # The manifest says app.js offset 0 len 290144, so payload[0:290144] should be app.js bytecode
+              # We can try to guess payload start by searching for bytecode header?
+              # For now, try to find payload by looking for "const express" near manifest
+              # Actually payload should be before manifest? Let's check manifest position relative to file end
+              print(f"Manifest at {start}, file size {len(data)}, distance to end {len(data)-end}")
+              # If manifest is near end, payload is before it?
+              # Let's try to assume payload starts at some known offset - try to find "LICENSE_SERVER_URL" and see if it's inside payload
+              idx = data.find(b'LICENSE_SERVER_URL')
+              print(f"LICENSE_SERVER_URL at {idx}, distance to manifest {start-idx}")
           PY
           ls -lh /tmp/manifest*
-          cat /tmp/manifest_pretty_full.json 2>&1 | head -200 || true
-      - name: Try extract with custom script
+          cat /tmp/manifest_pretty_full.json 2>&1 | head -100 || true
+      - name: Extract source using payload
         run: |
           python3 - << 'PY'
-          import json, os, re, struct
-          data = open('hkvm_binary','rb').read()
+          import json, os, re, sys
           # Load manifest
           try:
-              j = json.load(open('/tmp/manifest_pretty_full.json'))
+              j = json.load(open('/tmp/manifest_full.json'))
           except:
-              # Try to find manifest file
-              import glob
-              files = glob.glob('/tmp/manifest_*.json')
-              print(files)
-              if files:
-                  # Try first
-                  raw = open(files[0],'rb').read()
-                  try:
-                      j=json.loads(raw.decode())
-                  except:
-                      print("Failed to parse manifest")
-                      j=None
-              else:
-                  j=None
-          if not j:
-              print("No manifest")
-              exit(0)
+              print("No manifest_full")
+              sys.exit(0)
           print(f"Manifest entries {len(j)}")
-          # The manifest maps file -> {index: [offset, length]}
-          # We need to find where payload starts
-          # According to pkg source, payload is appended after Node binary, and manifest's offsets are relative to payload start
-          # We need to find payload start by searching for PAYLOAD_POSITION or by trying to find JS code
-          # Let's try to find payload position from footer
-          # Search for PAYLOAD_POSITION and then read number after?
-          # According to pkg lib: PAYLOAD_POSITION marker followed by position?
-          # Let's look at pkg source code: https://github.com/vercel/pkg/blob/main/lib/packer.ts
-          # It writes PAYLOAD_POSITION at end with position and size
-          # Let's try to find last occurrence of "PAYLOAD_POSITION" and then parse
-          # Actually footer is like: PAYLOAD_POSITION\n<position>\nPAYLOAD_SIZE\n<size>
-          # Let's check
-          text = data[-5000:].decode('utf-8','ignore')
-          print(text[-2000:])
-          # Try to extract numbers near PAYLOAD_POSITION
-          m = re.search(r'PAYLOAD_POSITION.*?(\d+).*?PAYLOAD_SIZE.*?(\d+)', text, re.DOTALL)
-          if m:
-              print(f"Found payload pos {m.group(1)} size {m.group(2)}")
-              payload_pos = int(m.group(1))
-              payload_size = int(m.group(2))
-              print(f"Payload pos {payload_pos} size {payload_size}")
-              # Now extract payload
-              payload = data[payload_pos:payload_pos+payload_size]
-              print(f"Payload len {len(payload)}")
-              open('/tmp/payload.bin','wb').write(payload)
-              # Now try to extract files using manifest offsets
-              # Manifest offsets are relative to payload start? Let's test for app.js
-              # app.js has 0:[0,290144] and 1:[290144,210199]
-              # So first file at offset 0 len 290144 should be app.js bytecode?
-              # Let's extract and check
-              for path, info in list(j.items())[:5]:
-                  print(f"{path} -> {info}")
-                  for idx, (off, length) in info.items():
-                      # idx is string like "0", "1", "3"
-                      # Try to slice payload
-                      chunk = payload[off:off+length]
-                      print(f"  idx {idx} off {off} len {length} chunk head {chunk[:100]}")
-          else:
-              print("No PAYLOAD_POSITION footer found via regex")
-              # Try alternative: search for PAYLOAD_POSITION in binary and then read following bytes as little endian?
-              # Let's look at pkg's packer: it writes at end: PAYLOAD_POSITION + position + "\n" + PAYLOAD_SIZE + size
-              # So we already tried regex, maybe payload is compressed?
-              # Let's try to find payload by searching for app.js content directly in binary
-              # Look for "LICENSE_SERVER_URL" which should be in app.js or licenses.js
-              pos = data.find(b'LICENSE_SERVER_URL')
-              print(f"LICENSE_SERVER_URL at {pos}")
-              # Check if that is inside payload
-          PY
-      - name: Try alternative extraction via strings and manual
-        run: |
-          # Try to use https://github.com/DonnchaC/node-pkg-extractor with debug
-          git clone https://github.com/DonnchaC/node-pkg-extractor.git
-          python3 node-pkg-extractor/node_pkg_extract/node_pkg_extract.py hkvm_binary --output extracted_pkg 2>&1 | head -100 || true
-          ls -R extracted_pkg 2>&1 | head -200 || true
-          # Try to extract app.js via reading payload directly if we have it
-          python3 - << 'PY'
-          import os, json, re
-          # Try to find payload.bin
+          # Try to load payload
+          payload_path = '/tmp/payload.bin'
+          if not os.path.exists(payload_path):
+              print("No payload.bin, trying to find payload via heuristic")
+              data = open('hkvm_binary','rb').read()
+              # Try to find payload position via footer parsing again but more robust
+              # The footer is at end: there is a JSON? Let's read last 1k and try to find numbers
+              tail = data[-1000:]
+              # Look for PAYLOAD_POSITION as string and then read following lines
+              # The file may have PAYLOAD_POSITION and PAYLOAD_SIZE as separate strings with numbers between?
+              # Let's search for all numbers near end
+              text = data[-5000:].decode('utf-8','ignore')
+              print(text)
+              # If still no payload, try to guess payload start by using manifest offsets and searching for known file content
+              # For example, app.js source should contain "const express"
+              # Search for "const express = require" in data
+              idx = data.find(b'const express = require')
+              print(f"const express at {idx}")
+              # If manifest says app.js source at offset 290144 len 210199, then payload start = idx - 290144?
+              if idx!=-1:
+                  # manifest says app.js source at 290144
+                  payload_start_guess = idx - 290144
+                  print(f"Guessed payload start {payload_start_guess}")
+                  # Try to extract payload from guessed start to manifest start
+                  # Manifest start is where JSON starts
+                  manifest_start = data.find(b'{"\\/snapshot\\/hkvm\\/app.js"') if data.find(b'{"\\/snapshot\\/hkvm\\/app.js"')!=-1 else data.find(b'{"/snapshot/hkvm/app.js"')
+                  if manifest_start==-1:
+                      manifest_start = data.find(b'/snapshot/hkvm/app.js')
+                  print(f"Manifest start guess {manifest_start}")
+                  if payload_start_guess>0 and manifest_start>payload_start_guess:
+                      payload = data[payload_start_guess:manifest_start]
+                      print(f"Guessed payload len {len(payload)}")
+                      open('/tmp/payload.bin','wb').write(payload)
+          # Now we have payload
           if os.path.exists('/tmp/payload.bin'):
               payload = open('/tmp/payload.bin','rb').read()
-              print(f"Payload size {len(payload)}")
-              # Try to find JS files inside payload by looking for "module.exports" or "const express"
-              # The payload may contain both bytecode and source - bytecode starts with specific header?
-              # Let's try to extract files using manifest
-              try:
-                  j = json.load(open('/tmp/manifest_pretty_full.json'))
-                  print(f"Manifest {len(j)}")
-                  os.makedirs('v3-source', exist_ok=True)
-                  for path, info in j.items():
-                      # Only extract main files, not node_modules
-                      if 'node_modules' in path:
-                          continue
-                      # Get the largest chunk? Or combine?
-                      # For app.js, we have 0 and 1 and 3 - 0 is bytecode, 1 is source? Let's check
-                      # According to pkg docs: 0 is bytecode, 1 is source
-                      # So we want index "1" which is source
-                      if "1" in info:
-                          off, length = info["1"]
-                          chunk = payload[off:off+length]
-                          # Try to decode
-                          try:
-                              text = chunk.decode('utf-8')
-                          except:
-                              text = chunk.decode('utf-8','ignore')
-                          # Save
-                          out_path = 'v3-source/' + path.replace('/snapshot/hkvm/','')
-                          os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                          open(out_path,'w',encoding='utf-8',errors='ignore').write(text)
-                          print(f"Wrote {out_path} len {len(text)}")
-                      elif "0" in info:
-                          off, length = info["0"]
-                          chunk = payload[off:off+length]
-                          # This is bytecode, skip for now
-                          pass
-              except Exception as e:
-                  print(f"Error {e}")
-                  import traceback
-                  traceback.print_exc()
+              print(f"Payload len {len(payload)}")
+              os.makedirs('v3-source', exist_ok=True)
+              os.makedirs('extracted', exist_ok=True)
+              # Save manifest
+              import shutil
+              shutil.copy('/tmp/manifest_full.json','extracted/manifest_full.json')
+              shutil.copy('/tmp/manifest_pretty_full.json','extracted/manifest_pretty_full.json')
+              # Extract files
+              count=0
+              for path, info in j.items():
+                  if 'node_modules' in path:
+                      continue
+                  # Prefer source index "1" over bytecode "0"
+                  # If both exist, use "1"
+                  if "1" in info:
+                      off, length = info["1"]
+                      chunk = payload[off:off+length]
+                      try:
+                          text = chunk.decode('utf-8')
+                      except:
+                          text = chunk.decode('utf-8','ignore')
+                      # Only save if it looks like JS or EJS or CSS
+                      out_path = 'v3-source/' + path.replace('/snapshot/hkvm/','')
+                      os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                      open(out_path,'w',encoding='utf-8',errors='ignore').write(text)
+                      count+=1
+                      print(f"Wrote {out_path} len {len(text)}")
+                  # Also try to save bytecode as .jsc for reference?
+              print(f"Total extracted {count} files")
+              # Also extract licenses.js specifically
+              if '/snapshot/hkvm/licenses.js' in j:
+                  info = j['/snapshot/hkvm/licenses.js']
+                  print(f"licenses.js info {info}")
+                  for k,v in info.items():
+                      off,length = v
+                      chunk = payload[off:off+length]
+                      print(f"licenses.js idx {k} off {off} len {length} head {chunk[:200]}")
+          else:
+              print("Still no payload")
           PY
-          ls -R v3-source 2>&1 | head -100 || true
-          cat v3-source/app.js 2>&1 | head -200 || true
-          cat v3-source/licenses.js 2>&1 | head -200 || true
-      - name: Push results via API
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ls -R v3-source 2>&1 | head -200
+          cat v3-source/licenses.js 2>&1 | head -500 || true
+          cat v3-source/app.js 2>&1 | head -500 || true
+          ls -lh extracted/
+      - name: Commit and push extracted
         run: |
-          # Push manifest full
-          for f in /tmp/manifest_pretty_full.json /tmp/payload.bin; do
-            if [ -f "$f" ]; then
-              echo "Pushing $f"
-              base=$(basename $f)
-              dest="extracted/$base"
-              # Skip large payload.bin if >1M
-              size=$(stat -c%s "$f")
-              if [ $size -gt 900000 ]; then
-                echo "Skip large $f $size"
-                continue
-              fi
-              B64=$(base64 -w 0 "$f")
-              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
-              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              else
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              fi
-            fi
-          done
-          # Push v3-source
-          if [ -d v3-source ]; then
-            find v3-source -type f | head -50 | while read file; do
-              echo "Pushing $file"
-              size=$(stat -c%s "$file")
-              if [ $size -gt 900000 ]; then echo "Skip large $file"; continue; fi
-              dest="$file"
-              B64=$(base64 -w 0 "$file")
-              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
-              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              else
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              fi
-            done
-          fi
-          # Push extracted_pkg if exists
-          if [ -d extracted_pkg ]; then
-            find extracted_pkg -type f | head -50 | while read file; do
-              echo "Pushing $file"
-              size=$(stat -c%s "$file")
-              if [ $size -gt 900000 ]; then continue; fi
-              dest="extracted_pkg/${file#extracted_pkg/}"
-              B64=$(base64 -w 0 "$file")
-              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
-              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $dest\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              else
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $dest\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$dest | head -20
-              fi
-            done
-          fi
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add extracted/ v3-source/ || true
+          git status
+          git commit -m "Extract v3-source from pkg binary" || echo "No changes"
+          git push origin arena/01a0ddfc-hkvm || echo "Push failed"
