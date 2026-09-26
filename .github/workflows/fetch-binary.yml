@@ -13,53 +13,58 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: arena/01a0ddfc-hkvm
-      - name: Download binary from tmpfiles (robust)
+      - name: Download binary - try catbox first
         run: |
-          echo "Fetching tmpfiles page..."
-          PAGE=$(curl -L -s https://tmpfiles.org/wDwFpbnK2qyF/hkvm.bin)
-          echo "$PAGE" | head -100
-          DL_URL=$(echo "$PAGE" | grep -oP 'https://tmpfiles.org/dl/[^"]+' | head -1)
-          echo "DL_URL: $DL_URL"
-          if [ -z "$DL_URL" ]; then
-            echo "Failed to get DL URL, trying catbox"
-            DL_URL="https://files.catbox.moe/4rnuvl"
-          fi
-          echo "Downloading from $DL_URL"
-          curl -L -v -o hkvm_binary "$DL_URL"
+          echo "Trying catbox..."
+          curl -L -v -o hkvm_binary https://files.catbox.moe/4rnuvl || wget -O hkvm_binary https://files.catbox.moe/4rnuvl
           ls -lh hkvm_binary
           file hkvm_binary || true
-          head -c 200 hkvm_binary | od -c | head -5
-          # Check if it's HTML
           if head -c 1000 hkvm_binary | grep -qi "<html"; then
-            echo "Got HTML, not binary, trying catbox fallback"
-            curl -L -v -o hkvm_binary https://files.catbox.moe/4rnuvl
-            ls -lh hkvm_binary
+            echo "Catbox gave HTML, trying tmpfiles..."
+            PAGE=$(curl -L -s https://tmpfiles.org/wDwFpbnK2qyF/hkvm.bin)
+            DL_URL=$(echo "$PAGE" | grep -oP 'https://tmpfiles.org/dl/[^"]+' | head -1)
+            echo "DL_URL: $DL_URL"
+            if [ -n "$DL_URL" ]; then
+              curl -L -v -o hkvm_binary "$DL_URL"
+              ls -lh hkvm_binary
+            fi
           fi
+          echo "Final file:"
+          ls -lh hkvm_binary
+          file hkvm_binary || true
           sha256sum hkvm_binary || true
-          echo "Size: $(stat -c%s hkvm_binary)"
+          head -c 500 hkvm_binary | od -c | head -20
+          strings hkvm_binary | head -100 || true
       - name: Analyze binary
         run: |
+          echo "=== file ==="
+          file hkvm_binary || true
+          echo "=== strings pyinstaller ==="
           strings hkvm_binary | grep -i "pyinstaller" | head -20 || true
+          echo "=== urls ==="
           strings hkvm_binary | grep -iE "https?://" | sort -u | head -100 || true
-          strings hkvm_binary | grep -i "hkvm\|HKVM" | head -30 || true
-          strings hkvm_binary | grep -i "8080\|5000\|license" | head -100 || true
+          echo "=== branding ==="
+          strings hkvm_binary | grep -i "hkvm\|HKVM\|8080\|5000\|license" | head -100 || true
       - name: Install pyinstxtractor
         run: |
           curl -L -o pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py
           python3 pyinstxtractor.py hkvm_binary || true
           ls -lh
-          ls -R hkvm_binary_extracted 2>&1 | head -500
+          find . -name "*extracted*" -type d | head -20
+          ls -R hkvm_binary_extracted 2>&1 | head -1000
       - name: Generate report
         run: |
           mkdir -p report
+          file hkvm_binary > report/file.txt || true
+          ls -lh hkvm_binary > report/ls.txt || true
           strings hkvm_binary | grep -iE "https?://" | sort -u > report/urls.txt || true
           strings hkvm_binary | grep -i "pyinstaller" > report/pyinstaller.txt || true
           strings hkvm_binary | grep -i "HKVM\|hkvm\|8080\|5000\|license\|LICENSE" | sort -u > report/branding.txt || true
-          find hkvm_binary_extracted -type f | sort > report/files.txt || true
-          ls -R hkvm_binary_extracted > report/tree.txt 2>&1 || true
-          echo "=== FILE INFO ===" > report/full.txt
-          file hkvm_binary >> report/full.txt || true
-          ls -lh hkvm_binary >> report/full.txt || true
+          find hkvm_binary_extracted -type f 2>/dev/null | sort > report/files.txt || true
+          ls -R hkvm_binary_extracted 2>&1 > report/tree.txt || true
+          echo "=== FILE ===" > report/full.txt
+          cat report/file.txt >> report/full.txt
+          cat report/ls.txt >> report/full.txt
           echo "" >> report/full.txt
           echo "=== URLs ===" >> report/full.txt
           cat report/urls.txt >> report/full.txt
@@ -73,19 +78,11 @@ jobs:
           echo "=== Tree ===" >> report/full.txt
           cat report/tree.txt >> report/full.txt
           cat report/full.txt
-      - name: Create release with report
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="analysis-$(date +%s)"
-          echo "Creating release $TAG"
-          gh release create $TAG --title "Binary Analysis $TAG" --notes-file report/full.txt || echo "release create failed"
-          gh release upload $TAG report/urls.txt report/branding.txt report/files.txt report/tree.txt || true
       - name: Push report via API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for f in report/urls.txt report/branding.txt report/files.txt report/tree.txt report/full.txt; do
+          for f in report/file.txt report/ls.txt report/urls.txt report/branding.txt report/files.txt report/tree.txt report/full.txt report/pyinstaller.txt; do
             if [ -f "$f" ]; then
               echo "Uploading $f via API"
               CONTENT=$(base64 -w 0 "$f")
