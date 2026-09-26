@@ -13,87 +13,67 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: arena/01a0ddfc-hkvm
-      - name: Download binary - try catbox first
+      - name: Download binary
         run: |
-          echo "Trying catbox..."
           curl -L -o hkvm_binary https://files.catbox.moe/4rnuvl
           ls -lh hkvm_binary
           file hkvm_binary
-          if head -c 1000 hkvm_binary | grep -qi "<html"; then
-            echo "Catbox gave HTML, trying tmpfiles..."
-            PAGE=$(curl -L -s https://tmpfiles.org/wDwFpbnK2qyF/hkvm.bin)
-            DL_URL=$(echo "$PAGE" | grep -oP 'https://tmpfiles.org/dl/[^"]+' | head -1)
-            echo "DL_URL: $DL_URL"
-            if [ -n "$DL_URL" ]; then
-              curl -L -o hkvm_binary "$DL_URL"
-              ls -lh hkvm_binary
-            fi
-          fi
-          echo "Final:"
-          ls -lh hkvm_binary
-          file hkvm_binary
           sha256sum hkvm_binary
-          echo "=== First 1k ==="
-          head -c 1000 hkvm_binary | strings | head -100
-      - name: Deep strings analysis
+      - name: Deep analysis
         run: |
           mkdir -p report
-          echo "=== file ===" > report/full.txt
-          file hkvm_binary >> report/full.txt
-          ls -lh hkvm_binary >> report/full.txt
-          echo "" >> report/full.txt
-          echo "=== pyinstaller strings ===" >> report/full.txt
-          strings hkvm_binary | grep -i "pyinstaller\|MEI\|_MEI\|pyi_" | head -100 >> report/full.txt || true
-          echo "" >> report/full.txt
-          echo "=== URLs ===" >> report/full.txt
-          strings hkvm_binary | grep -iE "https?://" | sort -u | head -200 >> report/full.txt || true
-          echo "" >> report/full.txt
-          echo "=== branding ===" >> report/full.txt
-          strings hkvm_binary | grep -i "hkvm\|HKVM\|HVM\|Strenox\|stornox\|kvm\|lxc\|8080\|5000" | sort -u | head -200 >> report/full.txt || true
-          echo "" >> report/full.txt
-          echo "=== license ===" >> report/full.txt
-          strings hkvm_binary | grep -i "license\|licence\|expiry\|activate\|key" | sort -u | head -200 >> report/full.txt || true
-          echo "" >> report/full.txt
-          echo "=== Flask ===" >> report/full.txt
-          strings hkvm_binary | grep -i "flask\|werkzeug\|jinja\|import" | head -200 >> report/full.txt || true
-          echo "" >> report/full.txt
-          echo "=== Python files ===" >> report/full.txt
-          strings hkvm_binary | grep -E "\.py$|\.pyc$|hvm|api|node|license_client|live_stats" | head -200 >> report/full.txt || true
-          cat report/full.txt
-          # Also save individual
+          file hkvm_binary > report/file.txt
+          ls -lh hkvm_binary > report/ls.txt
           strings hkvm_binary | grep -iE "https?://" | sort -u > report/urls.txt || true
-          strings hkvm_binary | grep -i "pyinstaller\|MEI" > report/pyinstaller.txt || true
-          strings hkvm_binary | grep -i "hkvm\|8080\|license" | sort -u > report/branding.txt || true
-      - name: Try pyinstxtractor with python3.11
+          strings hkvm_binary | grep -i "pyinstaller\|MEI\|_MEI\|PyInstaller" > report/pyinstaller.txt || true
+          strings hkvm_binary | grep -i "hkvm\|HKVM\|8080\|5000\|license" | sort -u > report/branding.txt || true
+          strings hkvm_binary | grep -i "flask\|werkzeug\|jinja\|import\|from" | head -100 > report/flask.txt || true
+          echo "=== URLs ==="
+          cat report/urls.txt | head -100
+          echo "=== Branding ==="
+          cat report/branding.txt | head -200
+          echo "=== PyInstaller ==="
+          cat report/pyinstaller.txt | head -50
+          echo "=== File ==="
+          cat report/file.txt
+      - name: Try pyinstxtractor
         run: |
-          sudo apt-get update -y && sudo apt-get install -y python3.11 python3.11-venv || true
-          python3.11 --version || python3 --version
           curl -L -o pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py
-          python3.11 pyinstxtractor.py hkvm_binary || python3 pyinstxtractor.py hkvm_binary || true
+          python3 pyinstxtractor.py hkvm_binary || true
           ls -lh
           find . -type d -name "*extracted*" | head -20
-          ls -R hkvm_binary_extracted 2>&1 | head -2000 || true
-          find hkvm_binary_extracted -type f 2>/dev/null | head -100 > report/files.txt || true
-          ls -R hkvm_binary_extracted 2>&1 > report/tree.txt || true
-          cat report/files.txt | head -100
-          cat report/tree.txt | head -500
-      - name: Push report via API
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          if [ -d "hkvm_binary_extracted" ]; then
+            find hkvm_binary_extracted -type f | sort > report/files.txt
+            ls -R hkvm_binary_extracted > report/tree.txt 2>&1
+            echo "Found $(wc -l < report/files.txt) files"
+          else
+            echo "No extracted dir"
+            echo "No extracted dir" > report/files.txt
+            echo "No extracted dir" > report/tree.txt
+          fi
+      - name: Generate full report
         run: |
-          for f in report/*.txt; do
-            if [ -f "$f" ]; then
-              echo "Uploading $f"
-              CONTENT=$(base64 -w 0 "$f")
-              # Get SHA if exists
-              RESP=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm)
-              SHA=$(echo "$RESP" | jq -r .sha 2>/dev/null || echo "")
-              if [ "$SHA" != "" ] && [ "$SHA" != "null" ] && [ "$SHA" != "null" ]; then
-                echo "Updating $f with SHA $SHA"
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -100 || true
-              else
-                echo "Creating $f"
-                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$CONTENT\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -100 || true
-              fi
-            fi
-          done
+          cat report/file.txt > report/full.txt
+          echo "" >> report/full.txt
+          echo "=== URLs ===" >> report/full.txt
+          cat report/urls.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Branding ===" >> report/full.txt
+          cat report/branding.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== PyInstaller ===" >> report/full.txt
+          cat report/pyinstaller.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Files ===" >> report/full.txt
+          cat report/files.txt >> report/full.txt
+          echo "" >> report/full.txt
+          echo "=== Tree ===" >> report/full.txt
+          cat report/tree.txt >> report/full.txt
+          cat report/full.txt | head -2000
+      - name: Commit report via git
+        run: |
+          git config user.name "arena-bot"
+          git config user.email "bot@arena.ai"
+          git add report/
+          git commit -m "Update binary analysis report" || echo "No changes to commit"
+          git push origin arena/01a0ddfc-hkvm || echo "Push failed"
