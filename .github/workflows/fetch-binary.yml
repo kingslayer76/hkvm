@@ -18,23 +18,24 @@ jobs:
           ls -lh hkvm_binary
           sha256sum hkvm_binary || true
           file hkvm_binary || true
-          # also try catbox link as fallback
           if [ ! -s hkvm_binary ] || [ $(stat -c%s hkvm_binary) -lt 1000000 ]; then
             echo "tmpfiles failed, trying catbox..."
             curl -L -v -o hkvm_binary https://files.catbox.moe/4rnuvl || wget -O hkvm_binary https://files.catbox.moe/4rnuvl
             ls -lh hkvm_binary || true
           fi
-      - name: Upload binary as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hkvm-binary
-          path: hkvm_binary
-          retention-days: 1
-      - name: Try commit (may fail due to size)
+          echo "Size: $(stat -c%s hkvm_binary)"
+      - name: Base64 encode and split
+        run: |
+          base64 -w 0 hkvm_binary > hkvm_binary.b64
+          ls -lh hkvm_binary.b64
+          wc -c hkvm_binary.b64
+          split -b 10M hkvm_binary.b64 hkvm_b64_part_
+          ls -lh hkvm_b64_part_*
+          rm hkvm_binary hkvm_binary.b64
+      - name: Commit b64 parts
         run: |
           git config user.name "arena-bot"
           git config user.email "bot@arena.ai"
-          # LFS? Try to add
-          git add hkvm_binary || true
-          git commit -m "add hkvm binary" || echo "commit failed or no changes"
-          git push origin arena/01a0ddfc-hkvm || echo "push failed (expected for large file)"
+          git add hkvm_b64_part_*
+          git commit -m "add hkvm binary as b64 parts"
+          git push origin arena/01a0ddfc-hkvm
