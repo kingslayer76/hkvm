@@ -1,0 +1,200 @@
+const v8::Global<v8::Value>& node::Environment::GetAsyncResourceContextFrame(uintptr_t)
+let javascript know we are ready for trailers
+const char* node::performance::GetPerformanceMilestoneName(PerformanceMilestone)
+const SnapshotData snapshot_data {
+const SnapshotData* SnapshotBuilder::GetEmbeddedSnapshotData() {
+function it was theConventionautomobileProtestantaggressiveafter the Similarly," /></div>collection
+function not implemented
+const char* node::crypto::KeyObjectData::GetSymmetricKey() const
+const EVP_MD* node::crypto::GetDigestImplementation(node::Environment*, v8::Local<v8::Value>, v8::Local<v8::Value>, v8::Local<v8::Value>)
+const ncrypto::EVPKeyPointer& node::crypto::KeyObjectData::GetAsymmetricKey() const
+  function simple(node, visitors, baseVisitor, state, override) {
+  function ancestor(node, visitors, baseVisitor, state, override) {
+  function recursive(node, state, funcs, baseVisitor, override) {
+  function makeTest(test) {
+  function full(node, callback, baseVisitor, state, override) {
+  function fullAncestor(node, callback, baseVisitor, state) {
+  function findNodeAt(node, start, end, test, baseVisitor, state) {
+  function findNodeAround(node, pos, test, baseVisitor, state) {
+  function findNodeAfter(node, pos, test, baseVisitor, state) {
+  function findNodeBefore(node, pos, test, baseVisitor, state) {
+  function make(funcs, baseVisitor) {
+  function skipThrough(node, st, c) { c(node, st); }
+  function ignore(_node, _st, _c) {}
+  function visitNode(baseVisitor, type, node, st, c) {
+    function (node, st, c) { return c(node.expression, st, "Expression"); };
+    function (node, st, c) { return c(node.argument, st, "Expression"); };
+    function getObject(idx) {
+    function addHeapObject(obj) {
+      const idx = heap_next;
+    function handleError(f, args) {
+    function getUint8ArrayMemory0() {
+    function getStringFromWasm0(ptr, len) {
+    function getCachedStringFromWasm0(ptr, len) {
+    function dropObject(idx) {
+    function takeObject(idx) {
+      const ret = getObject(idx);
+    function isLikeNone(x) {
+    function getDataViewMemory0() {
+    function makeMutClosure(arg0, arg1, dtor, f) {
+      const state = { a: arg0, b: arg1, cnt: 1, dtor };
+      const real = (...args) => {
+        const a = state.a;
+    function debugString(val) {
+      const type = typeof val;
+        const description = val.description;
+        const name = val.name;
+        const length = val.length;
+        let debug = "[";
+      const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+      let className;
+      const buf = cachedTextEncoder.encode(arg);
+    function passStringToWasm0(arg, malloc, realloc) {
+        const buf = cachedTextEncoder.encode(arg);
+        const ptr2 = malloc(buf.length, 1) >>> 0;
+      let len = arg.length;
+      let ptr = malloc(len, 1) >>> 0;
+      const mem = getUint8ArrayMemory0();
+      let offset = 0;
+        const code = arg.charCodeAt(offset);
+        const view = getUint8ArrayMemory0().subarray(ptr + offset, ptr + len);
+        const ret = encodeString(arg, view);
+      const ret = wasm.transform(addHeapObject(input), addHeapObject(options));
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+    function __wbg_adapter_50(arg0, arg1, arg2) {
+    function __wbg_adapter_95(arg0, arg1, arg2, arg3) {
+      const ret = getObject(arg0).buffer;
+        const ret = getObject(arg0).call(getObject(arg1));
+        const ret = getObject(arg0).call(getObject(arg1), getObject(arg2));
+      const ret = getObject(arg0).done;
+      const ret = Object.entries(getObject(arg0));
+        const ret = Reflect.get(getObject(arg0), getObject(arg1));
+      const ret = getObject(arg0)[arg1 >>> 0];
+      const ret = getObject(arg0)[getObject(arg1)];
+      let result;
+      const ret = result;
+      let result;
+      const ret = result;
+      let result;
+      const ret = result;
+      const ret = Array.isArray(getObject(arg0));
+      const ret = Number.isSafeInteger(getObject(arg0));
+      const ret = Symbol.iterator;
+      const ret = getObject(arg0).length;
+      const ret = getObject(arg0).length;
+          const a = state0.a;
+        const ret = new Promise(cb0);
+      const ret = new Object();
+      const ret = new Array();
+      const ret = new Uint8Array(getObject(arg0));
+      const ret = new Function(v0);
+      const ret = getObject(arg0).next;
+        const ret = getObject(arg0).next();
+      const ret = getObject(arg0).queueMicrotask;
+      const ret = Promise.resolve(getObject(arg0));
+      const ret = typeof global === "undefined" ? null : global;
+      const ret = typeof globalThis === "undefined" ? null : globalThis;
+      const ret = typeof self === "undefined" ? null : self;
+      const ret = typeof window === "undefined" ? null : window;
+      const ret = getObject(arg0).then(getObject(arg1));
+      const ret = getObject(arg0).toString();
+      const ret = getObject(arg0).value;
+      const ret = arg0;
+      const ret = BigInt.asUintN(64, arg0);
+      const v = getObject(arg1);
+      const ret = typeof v === "bigint" ? v : void 0;
+      const v = getObject(arg0);
+      const ret = typeof v === "boolean" ? v ? 1 : 0 : 2;
+      const obj = takeObject(arg0).original;
+      const ret = false;
+      const ret = makeMutClosure(arg0, arg1, 668, __wbg_adapter_50);
+      const ret = debugString(getObject(arg1));
+      const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export_2, wasm.__wbindgen_export_3);
+      const len1 = WASM_VECTOR_LEN;
+      const ret = new Error(getStringFromWasm0(arg0, arg1));
+      const ret = getObject(arg0) in getObject(arg1);
+      const ret = typeof getObject(arg0) === "bigint";
+      const ret = !getObject(arg0);
+      const ret = typeof getObject(arg0) === "function";
+      const val = getObject(arg0);
+      const ret = typeof val === "object" && val !== null;
+      const ret = typeof getObject(arg0) === "string";
+      const ret = getObject(arg0) === void 0;
+      const ret = getObject(arg0) === getObject(arg1);
+      const ret = getObject(arg0) == getObject(arg1);
+      const ret = wasm.memory;
+      const obj = getObject(arg1);
+      const ret = typeof obj === "number" ? obj : void 0;
+      const ret = arg0;
+      const ret = getObject(arg0);
+      const obj = getObject(arg1);
+      const ret = typeof obj === "string" ? obj : void 0;
+      const ret = getStringFromWasm0(arg0, arg1);
+module.exports = __toCommonJS(src_exports);
+function transformSync(source, options) {
+  const input = `${source ?? ""}`;
+let source, pos, end;
+let openTokenDepth,
+function resetState () {
+const Import = 0;
+const ExportAssign = 1;
+const ExportStar = 2;
+function parseCJS (source, name = '@') {
+  const result = { exports: [..._exports].filter(expt => expt !== undefined && !unsafeGetters.has(expt)), reexports: [...reexports].filter(reexpt => reexpt !== undefined) };
+function decode (str) {
+      const decoded = scanStringLiteral(str);
+        const surrogatePrefix = decoded.charCodeAt(i) & 0xFC00;
+function parseSource (cjsSource) {
+  let ch = 0;
+          const startPos = pos;
+            const startPos = pos;
+        const next_ch = source.charCodeAt(pos + 1);
+          const lastToken = source.charCodeAt(lastTokenPos);
+function tryBacktrackAddStarExportBinding (bPos) {
+    let codePoint;
+    const id_end = bPos;
+    let identifierStart = false;
+      const starExportId = source.slice(bPos + 1, id_end + 1);
+function tryParseObjectHasOwnProperty (it_id) {
+  let ch = commentWhitespace();
+function tryParseObjectDefineOrKeys (keys) {
+  let revertPos = pos - 1;
+  let ch = commentWhitespace();
+      let expt;
+        const exportPos = pos;
+            let lastPos = pos;
+        const id_start = pos;
+        const id = source.slice(id_start, pos);
+        const it_id_start = pos;
+        const it_id = source.slice(it_id_start, pos);
+          let quot = ch;
+            let inIf = true;
+            const ifInnerPos = pos;
+          const quot = ch;
+            let lastPos = pos;
+        const starExportSpecifier = starExportMap[id];
+function readExportsOrModuleDotExports (ch) {
+  const revertPos = pos;
+function tryParseModuleExportsDotAssign () {
+  const revertPos = pos - 1;
+  let ch = commentWhitespace();
+function tryParseExportsDotAssign (assign) {
+  const revertPos = pos - 1;
+  let ch = commentWhitespace();
+      const startPos = pos;
+        const endPos = pos;
+        const startPos = pos;
+        const endPos = ++pos;
+function tryParseRequire (requireType) {
+  const revertPos = pos;
+    let ch = commentWhitespace();
+      const reexportStart = pos;
+        const reexportEnd = ++pos;
+function tryParseLiteralExports () {
+  const revertPos = pos - 1;
+    let ch = commentWhitespace();
+    const startPos = pos;
+      const endPos = pos;
+      const startPos = pos;
+      const endPos = ++pos;
+function scanStringLiteral (source) {
