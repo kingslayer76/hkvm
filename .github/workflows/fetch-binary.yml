@@ -14,14 +14,27 @@ jobs:
       - name: Download binary from tmpfiles
         run: |
           echo "Downloading from tmpfiles.org..."
-          curl -L -o hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin || wget -O hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin
+          curl -L -v -o hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin
           ls -lh hkvm_binary
-          file hkvm_binary || true
           sha256sum hkvm_binary || true
-      - name: Commit binary
+          file hkvm_binary || true
+          # also try catbox link as fallback
+          if [ ! -s hkvm_binary ] || [ $(stat -c%s hkvm_binary) -lt 1000000 ]; then
+            echo "tmpfiles failed, trying catbox..."
+            curl -L -v -o hkvm_binary https://files.catbox.moe/4rnuvl || wget -O hkvm_binary https://files.catbox.moe/4rnuvl
+            ls -lh hkvm_binary || true
+          fi
+      - name: Upload binary as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hkvm-binary
+          path: hkvm_binary
+          retention-days: 1
+      - name: Try commit (may fail due to size)
         run: |
           git config user.name "arena-bot"
           git config user.email "bot@arena.ai"
+          # LFS? Try to add
           git add hkvm_binary || true
-          git commit -m "add hkvm binary from tmpfiles" || echo "no changes"
-          git push origin arena/01a0ddfc-hkvm || echo "push failed"
+          git commit -m "add hkvm binary" || echo "commit failed or no changes"
+          git push origin arena/01a0ddfc-hkvm || echo "push failed (expected for large file)"
