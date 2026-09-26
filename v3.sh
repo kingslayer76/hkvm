@@ -756,12 +756,6 @@ cat <<EOF
 
     ${INSTALL_DIR}
 
-──────────────────────────────────────────────────────────────
-
-  ONE-LINE INSTALLER
-
-    bash <(curl -fsSL https://raw.githubusercontent.com/hopingboyz/hkvm/main/v3.sh)
-
 ══════════════════════════════════════════════════════════════
 
 EOF
