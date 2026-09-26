@@ -1,0 +1,27 @@
+name: Fetch HKVM Binary
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - arena/01a0ddfc-hkvm
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: arena/01a0ddfc-hkvm
+      - name: Download binary from tmpfiles
+        run: |
+          echo "Downloading from tmpfiles.org..."
+          curl -L -o hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin || wget -O hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin
+          ls -lh hkvm_binary
+          file hkvm_binary || true
+          sha256sum hkvm_binary || true
+      - name: Commit binary
+        run: |
+          git config user.name "arena-bot"
+          git config user.email "bot@arena.ai"
+          git add hkvm_binary || true
+          git commit -m "add hkvm binary from tmpfiles" || echo "no changes"
+          git push origin arena/01a0ddfc-hkvm || echo "push failed"
