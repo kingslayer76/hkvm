@@ -11,16 +11,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: arena/01a0ddfc-hkvm
+          fetch-depth: 0
       - name: Download binary from tmpfiles
         run: |
           echo "Downloading from tmpfiles.org..."
-          curl -L -v -o hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin
+          curl -L -o hkvm_binary https://tmpfiles.org/dl/1790434643.6157720d67dd3043/wDwFpbnK2qyF/hkvm.bin
           ls -lh hkvm_binary
           sha256sum hkvm_binary || true
           file hkvm_binary || true
           if [ ! -s hkvm_binary ] || [ $(stat -c%s hkvm_binary) -lt 1000000 ]; then
             echo "tmpfiles failed, trying catbox..."
-            curl -L -v -o hkvm_binary https://files.catbox.moe/4rnuvl || wget -O hkvm_binary https://files.catbox.moe/4rnuvl
+            curl -L -o hkvm_binary https://files.catbox.moe/4rnuvl || wget -O hkvm_binary https://files.catbox.moe/4rnuvl
             ls -lh hkvm_binary || true
           fi
           echo "Size: $(stat -c%s hkvm_binary)"
@@ -29,13 +30,29 @@ jobs:
           base64 -w 0 hkvm_binary > hkvm_binary.b64
           ls -lh hkvm_binary.b64
           wc -c hkvm_binary.b64
-          split -b 10M hkvm_binary.b64 hkvm_b64_part_
+          split -b 5M hkvm_binary.b64 hkvm_b64_part_
           ls -lh hkvm_b64_part_*
           rm hkvm_binary hkvm_binary.b64
-      - name: Commit b64 parts
+      - name: Commit b64 parts to new branch
         run: |
           git config user.name "arena-bot"
           git config user.email "bot@arena.ai"
+          git checkout -B hkvm-binary-parts
           git add hkvm_b64_part_*
-          git commit -m "add hkvm binary as b64 parts"
-          git push origin arena/01a0ddfc-hkvm
+          git commit -m "add hkvm binary as b64 parts" || echo "commit failed"
+          git push origin hkvm-binary-parts --force || echo "push failed"
+          # also try to push to original branch
+          git checkout arena/01a0ddfc-hkvm
+          git checkout -b temp-branch || git checkout temp-branch
+          cp hkvm_b64_part_* /tmp/ || true
+          git checkout arena/01a0ddfc-hkvm
+          mv /tmp/hkvm_b64_part_* . || true
+          git add hkvm_b64_part_* || true
+          git commit -m "add b64 parts" || true
+          git push origin arena/01a0ddfc-hkvm || echo "push to arena failed"
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hkvm-b64-parts
+          path: hkvm_b64_part_*
+          retention-days: 1
