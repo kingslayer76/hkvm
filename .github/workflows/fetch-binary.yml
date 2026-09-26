@@ -19,61 +19,62 @@ jobs:
           ls -lh hkvm_binary
           file hkvm_binary
           sha256sum hkvm_binary
-      - name: Deep analysis
+      - name: Base64 split and push via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p report
-          file hkvm_binary > report/file.txt
-          ls -lh hkvm_binary > report/ls.txt
-          strings hkvm_binary | grep -iE "https?://" | sort -u > report/urls.txt || true
-          strings hkvm_binary | grep -i "pyinstaller\|MEI\|_MEI\|PyInstaller" > report/pyinstaller.txt || true
-          strings hkvm_binary | grep -i "hkvm\|HKVM\|8080\|5000\|license" | sort -u > report/branding.txt || true
-          strings hkvm_binary | grep -i "flask\|werkzeug\|jinja\|import\|from" | head -100 > report/flask.txt || true
-          echo "=== URLs ==="
-          cat report/urls.txt | head -100
-          echo "=== Branding ==="
-          cat report/branding.txt | head -200
-          echo "=== PyInstaller ==="
-          cat report/pyinstaller.txt | head -50
-          echo "=== File ==="
-          cat report/file.txt
-      - name: Try pyinstxtractor
+          base64 -w 0 hkvm_binary > hkvm_binary.b64
+          ls -lh hkvm_binary.b64
+          mkdir -p chunks
+          split -b 2M hkvm_binary.b64 chunks/chunk_
+          ls -lh chunks/
+          # Push each chunk via API
+          for f in chunks/chunk_*; do
+            echo "Pushing $f"
+            CONTENT=$(base64 -w 0 "$f" 2>/dev/null || cat "$f" | base64 -w 0)
+            # Actually file is already base64, need to double base64? No, GitHub API expects base64 of file content, file content is base64 string, so we need to base64 encode again
+            # Let's just base64 encode the chunk file
+            B64=$(base64 -w 0 "$f")
+            # Try to get existing SHA
+            SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
+            if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
+              curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+            else
+              curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+            fi
+          done
+          rm -rf chunks hkvm_binary.b64
+      - name: Try pkg extraction
         run: |
-          curl -L -o pyinstxtractor.py https://raw.githubusercontent.com/extremecoders-re/pyinstxtractor/master/pyinstxtractor.py
-          python3 pyinstxtractor.py hkvm_binary || true
+          # Try to extract pkg binary
+          npm install -g pkg-unpack || npm install -g @yao-pkg/pkg || true
+          # Try different extractors
+          curl -L -o extract.js https://raw.githubusercontent.com/NotReece/pkg-extract/master/index.js || true
           ls -lh
-          find . -type d -name "*extracted*" | head -20
-          if [ -d "hkvm_binary_extracted" ]; then
-            find hkvm_binary_extracted -type f | sort > report/files.txt
-            ls -R hkvm_binary_extracted > report/tree.txt 2>&1
-            echo "Found $(wc -l < report/files.txt) files"
-          else
-            echo "No extracted dir"
-            echo "No extracted dir" > report/files.txt
-            echo "No extracted dir" > report/tree.txt
-          fi
-      - name: Generate full report
+          # Try to run binary with env to dump
+          chmod +x hkvm_binary
+          timeout 5 ./hkvm_binary --help || true
+          timeout 5 ./hkvm_binary 2>&1 | head -100 || true
+          # Try to use pkg's snapshot
+          mkdir -p extracted
+          # Use strings to extract JS files
+          strings hkvm_binary | grep -E "^\s*module\.exports|^\s*const |^\s*let |^\s*function " | head -200 > extracted/strings_js.txt || true
+          # List snapshot files from binary
+          strings hkvm_binary | grep -o "/snapshot/hkvm/[^:]*" | sort -u > extracted/snapshot_files.txt || true
+          cat extracted/snapshot_files.txt | head -100
+      - name: Push extracted list via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat report/file.txt > report/full.txt
-          echo "" >> report/full.txt
-          echo "=== URLs ===" >> report/full.txt
-          cat report/urls.txt >> report/full.txt
-          echo "" >> report/full.txt
-          echo "=== Branding ===" >> report/full.txt
-          cat report/branding.txt >> report/full.txt
-          echo "" >> report/full.txt
-          echo "=== PyInstaller ===" >> report/full.txt
-          cat report/pyinstaller.txt >> report/full.txt
-          echo "" >> report/full.txt
-          echo "=== Files ===" >> report/full.txt
-          cat report/files.txt >> report/full.txt
-          echo "" >> report/full.txt
-          echo "=== Tree ===" >> report/full.txt
-          cat report/tree.txt >> report/full.txt
-          cat report/full.txt | head -2000
-      - name: Commit report via git
-        run: |
-          git config user.name "arena-bot"
-          git config user.email "bot@arena.ai"
-          git add report/
-          git commit -m "Update binary analysis report" || echo "No changes to commit"
-          git push origin arena/01a0ddfc-hkvm || echo "Push failed"
+          for f in extracted/*.txt; do
+            if [ -f "$f" ]; then
+              echo "Pushing $f"
+              B64=$(base64 -w 0 "$f")
+              SHA=$(curl -s -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/kingslayer76/hkvm/contents/$f?ref=arena/01a0ddfc-hkvm | jq -r .sha 2>/dev/null)
+              if [ "$SHA" != "" ] && [ "$SHA" != "null" ]; then
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Update $f\",\"content\":\"$B64\",\"sha\":\"$SHA\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+              else
+                curl -s -X PUT -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/json" -d "{\"message\":\"Add $f\",\"content\":\"$B64\",\"branch\":\"arena/01a0ddfc-hkvm\"}" https://api.github.com/repos/kingslayer76/hkvm/contents/$f | head -20
+              fi
+            fi
+          done
